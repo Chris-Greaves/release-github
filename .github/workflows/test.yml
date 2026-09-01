@@ -24,3 +24,32 @@ jobs:
       - run: npm ci
 
       - run: node_modules/.bin/bats test/
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Put curl stub on PATH
+        run: echo "$GITHUB_WORKSPACE/test/stubs" >> "$GITHUB_PATH"
+
+      - id: run_action
+        uses: ./
+        env:
+          CURL_STUB_LOG: ${{ runner.temp }}/curl.args
+          CURL_STUB_STATUS: '201'
+          CURL_STUB_BODY: '{"html_url": "https://github.com/octocat/hello-world/releases/tag/v1.0.0"}'
+        with:
+          repo: octocat/hello-world
+          tag: v1.0.0
+          generate-notes: 'true'
+
+      - name: Assert url output matches the stub's html_url
+        env:
+          ACTUAL_URL: ${{ steps.run_action.outputs.url }}
+        run: |
+          expected="https://github.com/octocat/hello-world/releases/tag/v1.0.0"
+          if [[ "$ACTUAL_URL" != "$expected" ]]; then
+            echo "expected url output '$expected', got '$ACTUAL_URL'" >&2
+            exit 1
+          fi
