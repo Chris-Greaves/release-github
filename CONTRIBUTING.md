@@ -1,5 +1,21 @@
 # Contributing
 
+## Running tests
+
+Tests use [bats](https://github.com/bats-core/bats-core) and live under `test/` as `*.bats`
+files. `curl` is stubbed (see `test/stubs/curl`), so no test run hits the real GitHub API.
+The test helpers use `mapfile -d ''`, which needs bash >= 4.4 — on macOS, the system `/bin/bash`
+is 3.2, so install a newer bash (e.g. via Homebrew) before running tests.
+
+```
+npm install
+node_modules/.bin/bats test/
+```
+
+`npm test` runs the same command and works in most shells, but on some Windows setups the
+npm/npx wrapper mis-resolves paths for bats — if `npm test` fails with a "Passed library load
+path is not an absolute path" error, run `node_modules/.bin/bats test/` directly instead.
+
 ## Commit messages
 
 This repo uses [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/).

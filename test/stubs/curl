@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Fake curl used by tests in place of the real binary. Records the exact
+# argv it was invoked with (NUL-delimited, since the JSON payload argument
+# contains embedded newlines) and prints a scripted response in the same
+# shape release.sh expects from `curl -w '\n%{http_code}'`: the response
+# body, a newline, then the HTTP status code.
+set -euo pipefail
+
+: "${CURL_STUB_LOG:?CURL_STUB_LOG is not set}"
+printf '%s\0' "$@" > "$CURL_STUB_LOG"
+
+status="${CURL_STUB_STATUS:-200}"
+body="${CURL_STUB_BODY:-{\}}"
+
+printf '%s\n%s' "$body" "$status"
