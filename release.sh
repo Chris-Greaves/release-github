@@ -12,13 +12,18 @@ require_arg() {
 usage() {
   cat >&2 <<'EOF'
 Usage: release.sh --tag <name> [--repo owner/name] [--commit <ref>]
-                   [--body <text> | --body-file <path>]
+                   [--body <text> | --body-file <path>] [--generate-notes]
+                   [--draft] [--prerelease] [--latest]
 
   --repo owner/name   Repository to release into. Defaults to $GITHUB_REPOSITORY.
   --tag <name>        Tag to create the release for. Required.
   --commit <ref>      Commit/branch/tag to target. Defaults to the repo's default branch HEAD.
   --body <text>       Release body text. Mutually exclusive with --body-file.
   --body-file <path>  Read the release body from this file. Mutually exclusive with --body.
+  --generate-notes    Have GitHub append its auto-generated notes after the body.
+  --draft             Create the release as a draft.
+  --prerelease        Mark the release as a prerelease.
+  --latest            Mark the release as the repo's "latest" release.
 
 Auth is read from $GITHUB_TOKEN, falling back to $GH_TOKEN.
 API base URL defaults to https://api.github.com, overridable via $GITHUB_API_URL.
@@ -32,6 +37,10 @@ body=""
 body_file=""
 body_provided=false
 body_file_provided=false
+generate_notes=false
+draft=false
+prerelease=false
+latest=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -61,6 +70,22 @@ while [[ $# -gt 0 ]]; do
       body_file="$2"
       body_file_provided=true
       shift 2
+      ;;
+    --generate-notes)
+      generate_notes=true
+      shift
+      ;;
+    --draft)
+      draft=true
+      shift
+      ;;
+    --prerelease)
+      prerelease=true
+      shift
+      ;;
+    --latest)
+      latest=true
+      shift
       ;;
     *)
       echo "Unknown argument: $1" >&2
@@ -113,6 +138,22 @@ fi
 if [[ "$body_provided" == true || "$body_file_provided" == true ]]; then
   jq_args+=(--arg body "$body")
   jq_filter+=' + {body: $body}'
+fi
+
+if [[ "$generate_notes" == true ]]; then
+  jq_filter+=' + {generate_release_notes: true}'
+fi
+
+if [[ "$draft" == true ]]; then
+  jq_filter+=' + {draft: true}'
+fi
+
+if [[ "$prerelease" == true ]]; then
+  jq_filter+=' + {prerelease: true}'
+fi
+
+if [[ "$latest" == true ]]; then
+  jq_filter+=' + {make_latest: "true"}'
 fi
 
 payload=$(jq -n "${jq_args[@]}" "$jq_filter")
