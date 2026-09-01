@@ -16,6 +16,25 @@ node_modules/.bin/bats test/
 npm/npx wrapper mis-resolves paths for bats — if `npm test` fails with a "Passed library load
 path is not an absolute path" error, run `node_modules/.bin/bats test/` directly instead.
 
+## Versioning
+
+Releases of this action are tagged with semver tags, e.g. `v1.2.3`. Alongside each semver tag,
+the major-version tag (e.g. `v1`) is moved to point at the same commit — this is what consumers
+pin against in their `uses: Chris-Greaves/release-github@v1` steps, so they pick up non-breaking
+fixes and features automatically.
+
+Tagging is currently a manual process:
+
+```
+git tag v1.2.3
+git push origin v1.2.3
+git tag -f v1
+git push origin v1 --force
+```
+
+There is no automated self-release workflow yet for this repo — that's future work, not covered
+by the current tagging process.
+
 ## Commit messages
 
 This repo uses [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/).
