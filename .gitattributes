@@ -2,3 +2,4 @@
 *.bats text eol=lf
 *.bash text eol=lf
 test/stubs/curl text eol=lf
+action.yml text eol=lf

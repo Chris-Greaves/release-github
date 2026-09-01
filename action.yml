@@ -1,0 +1,106 @@
+name: 'Create GitHub Release'
+description: 'Create a GitHub release via the REST API, bash-only, no Docker or JS runtime.'
+author: 'Chris-Greaves'
+
+branding:
+  icon: 'tag'
+  color: 'blue'
+
+inputs:
+  token:
+    description: 'Token used to authenticate with the GitHub API.'
+    required: false
+    default: ${{ github.token }}
+  repo:
+    description: 'Repository to release into, owner/name. Defaults to $GITHUB_REPOSITORY.'
+    required: false
+  tag:
+    description: 'Tag to create the release for.'
+    required: true
+  commit:
+    description: "Commit/branch/tag to target. Defaults to the repo's default branch HEAD."
+    required: false
+  body:
+    description: 'Release body text. Mutually exclusive with body-file.'
+    required: false
+  body-file:
+    description: 'Path to a file to read the release body from. Mutually exclusive with body.'
+    required: false
+  generate-notes:
+    description: "Have GitHub append its auto-generated notes after the body."
+    required: false
+    default: 'false'
+  draft:
+    description: 'Create the release as a draft.'
+    required: false
+    default: 'false'
+  prerelease:
+    description: 'Mark the release as a prerelease.'
+    required: false
+    default: 'false'
+  latest:
+    description: 'Mark the release as the repo''s "latest" release.'
+    required: false
+    default: 'false'
+  api-url:
+    description: 'GitHub API base URL. Defaults to $GITHUB_API_URL, then https://api.github.com.'
+    required: false
+
+outputs:
+  url:
+    description: "The created release's html_url."
+    value: ${{ steps.release.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - id: release
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        INPUT_REPO: ${{ inputs.repo }}
+        INPUT_TAG: ${{ inputs.tag }}
+        INPUT_COMMIT: ${{ inputs.commit }}
+        INPUT_BODY: ${{ inputs.body }}
+        INPUT_BODY_FILE: ${{ inputs.body-file }}
+        INPUT_GENERATE_NOTES: ${{ inputs.generate-notes }}
+        INPUT_DRAFT: ${{ inputs.draft }}
+        INPUT_PRERELEASE: ${{ inputs.prerelease }}
+        INPUT_LATEST: ${{ inputs.latest }}
+        INPUT_API_URL: ${{ inputs.api-url }}
+      run: |
+        args=(--tag "$INPUT_TAG")
+
+        if [[ -n "$INPUT_REPO" ]]; then
+          args+=(--repo "$INPUT_REPO")
+        fi
+        if [[ -n "$INPUT_COMMIT" ]]; then
+          args+=(--commit "$INPUT_COMMIT")
+        fi
+        if [[ -n "$INPUT_BODY" ]]; then
+          args+=(--body "$INPUT_BODY")
+        fi
+        if [[ -n "$INPUT_BODY_FILE" ]]; then
+          args+=(--body-file "$INPUT_BODY_FILE")
+        fi
+        if [[ "$INPUT_GENERATE_NOTES" == "true" ]]; then
+          args+=(--generate-notes)
+        fi
+        if [[ "$INPUT_DRAFT" == "true" ]]; then
+          args+=(--draft)
+        fi
+        if [[ "$INPUT_PRERELEASE" == "true" ]]; then
+          args+=(--prerelease)
+        fi
+        if [[ "$INPUT_LATEST" == "true" ]]; then
+          args+=(--latest)
+        fi
+
+        # Only override the ambient $GITHUB_API_URL (e.g. GHES-provided) when
+        # the input was actually supplied.
+        if [[ -n "$INPUT_API_URL" ]]; then
+          export GITHUB_API_URL="$INPUT_API_URL"
+        fi
+
+        url=$("${{ github.action_path }}/release.sh" "${args[@]}")
+        echo "url=$url" >> "$GITHUB_OUTPUT"
