@@ -3,10 +3,11 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: release.sh --tag <name> [--repo owner/name]
+Usage: release.sh --tag <name> [--repo owner/name] [--commit <ref>]
 
   --repo owner/name   Repository to release into. Defaults to $GITHUB_REPOSITORY.
   --tag <name>        Tag to create the release for. Required.
+  --commit <ref>      Commit/branch/tag to target. Defaults to the repo's default branch HEAD.
 
 Auth is read from $GITHUB_TOKEN, falling back to $GH_TOKEN.
 API base URL defaults to https://api.github.com, overridable via $GITHUB_API_URL.
@@ -15,6 +16,7 @@ EOF
 
 repo="${GITHUB_REPOSITORY:-}"
 tag=""
+commit=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -32,6 +34,14 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       tag="$2"
+      shift 2
+      ;;
+    --commit)
+      if [[ $# -lt 2 ]]; then
+        echo "Error: --commit requires a value" >&2
+        exit 1
+      fi
+      commit="$2"
       shift 2
       ;;
     *)
@@ -61,7 +71,12 @@ fi
 api_url="${GITHUB_API_URL:-https://api.github.com}"
 api_url="${api_url%/}"
 
-payload=$(jq -n --arg tag_name "$tag" '{tag_name: $tag_name}')
+if [[ -n "$commit" ]]; then
+  payload=$(jq -n --arg tag_name "$tag" --arg target_commitish "$commit" \
+    '{tag_name: $tag_name, target_commitish: $target_commitish}')
+else
+  payload=$(jq -n --arg tag_name "$tag" '{tag_name: $tag_name}')
+fi
 
 response=$(curl -sS -w '\n%{http_code}' \
   -X POST \
