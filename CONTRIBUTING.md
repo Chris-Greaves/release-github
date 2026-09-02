@@ -18,22 +18,17 @@ path is not an absolute path" error, run `node_modules/.bin/bats test/` directly
 
 ## Versioning
 
-Releases of this action are tagged with semver tags, e.g. `v1.2.3`. Alongside each semver tag,
-the major-version tag (e.g. `v1`) is moved to point at the same commit — this is what consumers
-pin against in their `uses: Chris-Greaves/release-github@v1` steps, so they pick up non-breaking
-fixes and features automatically.
+Releases of this action are tagged with Release Tags, e.g. `v1.2.3`. Tagging is automated: a
+`release` job in `.github/workflows/test.yml` runs after the `bats` and `integration` jobs pass
+on a push to `main`. It computes the next version with `Chris-Greaves/next-semver`, and if that
+version differs from the last Release Tag, it invokes this action with `tag-major: true` and
+`tag-minor: true` to create the new Release Tag and move the Major Tag (e.g. `v1`) and Minor Tag
+(e.g. `v1.2`) to point at it. If the computed version is unchanged — no `feat`/`fix`/breaking
+commits since the last release — the job is a no-op, since a Release Tag is immutable once
+published and re-running would otherwise fail trying to recreate it.
 
-Tagging is currently a manual process:
-
-```
-git tag v1.2.3
-git push origin v1.2.3
-git tag -f v1
-git push origin v1 --force
-```
-
-There is no automated self-release workflow yet for this repo — that's future work, not covered
-by the current tagging process.
+The Major Tag is what consumers pin against in their `uses: Chris-Greaves/release-github@v1`
+steps, so they pick up non-breaking fixes and features automatically.
 
 ## Commit messages
 
