@@ -13,7 +13,7 @@ usage() {
   cat >&2 <<'EOF'
 Usage: release.sh --tag <name> [--repo owner/name] [--commit <ref>]
                    [--body <text> | --body-file <path>] [--generate-notes]
-                   [--draft] [--prerelease] [--latest] [--tag-major]
+                   [--draft] [--prerelease] [--latest] [--tag-major] [--tag-minor]
 
   --repo owner/name   Repository to release into. Defaults to $GITHUB_REPOSITORY.
   --tag <name>        Tag to create the release for. Required.
@@ -26,6 +26,9 @@ Usage: release.sh --tag <name> [--repo owner/name] [--commit <ref>]
   --latest            Mark the release as the repo's "latest" release.
   --tag-major         Also create/force-move the Major Tag (vMAJOR) to the Release Tag's commit.
                       Requires --tag to be a Release Tag (MAJOR.MINOR.PATCH, optional leading v).
+  --tag-minor         Also create/force-move the Minor Tag (vMAJOR.MINOR) to the Release Tag's
+                      commit. Requires --tag to be a Release Tag, same as --tag-major.
+                      Independent of --tag-major: either, both, or neither may be passed.
 
 Auth is read from $GITHUB_TOKEN, falling back to $GH_TOKEN.
 API base URL defaults to https://api.github.com, overridable via $GITHUB_API_URL.
@@ -138,14 +141,6 @@ create_or_move_tag() {
   fi
 }
 
-# major_tag_of <tag>
-# Derives the Major Tag name (always v-prefixed) from a Release Tag.
-major_tag_of() {
-  local major="${1#v}"
-  major="${major%%.*}"
-  echo "v$major"
-}
-
 repo="${GITHUB_REPOSITORY:-}"
 tag=""
 commit=""
@@ -158,6 +153,7 @@ draft=false
 prerelease=false
 latest=false
 tag_major=false
+tag_minor=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -208,6 +204,10 @@ while [[ $# -gt 0 ]]; do
       tag_major=true
       shift
       ;;
+    --tag-minor)
+      tag_minor=true
+      shift
+      ;;
     *)
       echo "Unknown argument: $1" >&2
       usage
@@ -226,9 +226,16 @@ if [[ -z "$tag" ]]; then
   exit 1
 fi
 
-if [[ "$tag_major" == true ]] && ! [[ "$tag" =~ $release_tag_regex ]]; then
-  echo "Error: --tag-major requires --tag to be a Release Tag (MAJOR.MINOR.PATCH, optional leading v); got '$tag'" >&2
-  exit 1
+# release_major/release_minor: the Release Tag's MAJOR/MINOR components, captured
+# from release_tag_regex here so major/minor moving-tag names can be built by
+# simple substitution below instead of each re-parsing $tag by hand.
+if [[ "$tag_major" == true || "$tag_minor" == true ]]; then
+  if ! [[ "$tag" =~ $release_tag_regex ]]; then
+    echo "Error: --tag-major/--tag-minor requires --tag to be a Release Tag (MAJOR.MINOR.PATCH, optional leading v); got '$tag'" >&2
+    exit 1
+  fi
+  release_major="${BASH_REMATCH[1]}"
+  release_minor="${BASH_REMATCH[2]}"
 fi
 
 if [[ "$body_provided" == true && "$body_file_provided" == true ]]; then
@@ -289,9 +296,14 @@ http_code=$(response_status "$response")
 response_body=$(response_body_of "$response")
 
 if [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
-  if [[ "$tag_major" == true ]]; then
+  if [[ "$tag_major" == true || "$tag_minor" == true ]]; then
     commit_sha=$(resolve_tag_commit_sha "$tag")
-    create_or_move_tag "$(major_tag_of "$tag")" "$commit_sha"
+    if [[ "$tag_major" == true ]]; then
+      create_or_move_tag "v$release_major" "$commit_sha"
+    fi
+    if [[ "$tag_minor" == true ]]; then
+      create_or_move_tag "v$release_major.$release_minor" "$commit_sha"
+    fi
   fi
   echo "$response_body" | jq -r '.html_url'
   exit 0

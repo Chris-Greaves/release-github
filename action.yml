@@ -48,6 +48,12 @@ inputs:
       tag to be a Release Tag (MAJOR.MINOR.PATCH, optional leading v).
     required: false
     default: 'false'
+  tag-minor:
+    description: >-
+      Also create/force-move the Minor Tag (vMAJOR.MINOR) to the Release Tag's commit. Requires
+      tag to be a Release Tag (MAJOR.MINOR.PATCH, optional leading v). Independent of tag-major.
+    required: false
+    default: 'false'
   api-url:
     description: 'GitHub API base URL. Defaults to $GITHUB_API_URL, then https://api.github.com.'
     required: false
@@ -74,6 +80,7 @@ runs:
         INPUT_PRERELEASE: ${{ inputs.prerelease }}
         INPUT_LATEST: ${{ inputs.latest }}
         INPUT_TAG_MAJOR: ${{ inputs.tag-major }}
+        INPUT_TAG_MINOR: ${{ inputs.tag-minor }}
         INPUT_API_URL: ${{ inputs.api-url }}
       run: |
         args=(--tag "$INPUT_TAG")
@@ -104,6 +111,9 @@ runs:
         fi
         if [[ "$INPUT_TAG_MAJOR" == "true" ]]; then
           args+=(--tag-major)
+        fi
+        if [[ "$INPUT_TAG_MINOR" == "true" ]]; then
+          args+=(--tag-minor)
         fi
 
         # Only override the ambient $GITHUB_API_URL (e.g. GHES-provided) when
