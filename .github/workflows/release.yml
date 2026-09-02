@@ -1,0 +1,36 @@
+name: test
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: next-semver
+        uses: Chris-Greaves/next-semver@v1
+
+      - id: last-release
+        name: Determine last Release Tag's version
+        run: |
+          last_tag=$(git tag --list --merged HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)
+          echo "version=${last_tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Create Release and move tags
+        if: steps.next-semver.outputs.version != steps.last-release.outputs.version
+        uses: ./
+        with:
+          tag: v${{ steps.next-semver.outputs.version }}
+          commit: ${{ github.sha }}
+          tag-major: 'true'
+          tag-minor: 'true'
+          generate-notes: 'true'
