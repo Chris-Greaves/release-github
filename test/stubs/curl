@@ -4,12 +4,31 @@
 # contains embedded newlines) and prints a scripted response in the same
 # shape release.sh expects from `curl -w '\n%{http_code}'`: the response
 # body, a newline, then the HTTP status code.
+#
+# Each invocation is numbered (0-indexed) so a test exercising multiple
+# sequential curl calls (e.g. release create -> SHA resolve -> ref
+# create/move) can inspect any one of them and script a distinct response
+# per call via stub_curl_sequence.
 set -euo pipefail
 
 : "${CURL_STUB_LOG:?CURL_STUB_LOG is not set}"
+
+count_file="$CURL_STUB_LOG.count"
+call_index=0
+if [[ -f "$count_file" ]]; then
+  call_index=$(<"$count_file")
+fi
+printf '%s' "$((call_index + 1))" > "$count_file"
+
+printf '%s\0' "$@" > "$CURL_STUB_LOG.$call_index"
 printf '%s\0' "$@" > "$CURL_STUB_LOG"
 
 status="${CURL_STUB_STATUS:-200}"
 body="${CURL_STUB_BODY:-{\}}"
+
+if [[ -n "${CURL_STUB_DIR:-}" && -f "$CURL_STUB_DIR/$call_index.status" ]]; then
+  status=$(<"$CURL_STUB_DIR/$call_index.status")
+  body=$(<"$CURL_STUB_DIR/$call_index.body")
+fi
 
 printf '%s\n%s' "$body" "$status"

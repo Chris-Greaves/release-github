@@ -6,6 +6,7 @@ RELEASE_SCRIPT="$BATS_TEST_DIRNAME/../release.sh"
 setup() {
   export PATH="$BATS_TEST_DIRNAME/stubs:$PATH"
   export CURL_STUB_LOG="$BATS_TEST_TMPDIR/curl.args"
+  export CURL_STUB_DIR="$BATS_TEST_TMPDIR/curl_stub"
 
   unset GITHUB_TOKEN GH_TOKEN GITHUB_REPOSITORY GITHUB_API_URL \
     CURL_STUB_STATUS CURL_STUB_BODY
@@ -14,26 +15,66 @@ setup() {
 }
 
 # stub_curl <http_status> <response_body>
+# Scripts the same response for every curl invocation in the test.
 stub_curl() {
   export CURL_STUB_STATUS="$1"
   export CURL_STUB_BODY="$2"
+}
+
+# stub_curl_sequence <status1> <body1> [<status2> <body2> ...]
+# Scripts one response per curl invocation, in call order (0-indexed) —
+# for flows that make several sequential API calls (e.g. release create ->
+# SHA resolve -> ref create/move). Any call beyond the scripted sequence
+# falls back to stub_curl's single-response behavior.
+stub_curl_sequence() {
+  mkdir -p "$CURL_STUB_DIR"
+
+  local i=0
+  while [[ $# -gt 0 ]]; do
+    printf '%s' "$1" > "$CURL_STUB_DIR/$i.status"
+    printf '%s' "$2" > "$CURL_STUB_DIR/$i.body"
+    i=$((i + 1))
+    shift 2
+  done
 }
 
 run_release() {
   run bash "$RELEASE_SCRIPT" "$@"
 }
 
-# Populates the global array CURL_ARGS with the argv the curl stub was
-# invoked with. Both curl_payload() and curl_request_url() scan this.
+# Number of times the curl stub was invoked (0 if never).
+curl_call_count() {
+  [[ -f "$CURL_STUB_LOG.count" ]] || { printf '0'; return 0; }
+  cat "$CURL_STUB_LOG.count"
+}
+
+# Fails loudly if curl was invoked at all — for asserting validation
+# rejects input before any API call is made.
+assert_curl_not_invoked() {
+  if [[ -f "$CURL_STUB_LOG" ]]; then
+    echo "expected curl not to have been invoked, but it was" >&2
+    return 1
+  fi
+}
+
+# Populates the global array CURL_ARGS with the argv of the curl stub's Nth
+# invocation (0-indexed; defaults to its only/last invocation). Both
+# curl_payload() and curl_request_url() scan this.
 _curl_args() {
-  [[ -f "$CURL_STUB_LOG" ]] || return 1
+  local index="${1:-}"
+  local log_file="$CURL_STUB_LOG"
+  if [[ -n "$index" ]]; then
+    log_file="$CURL_STUB_LOG.$index"
+  fi
+  [[ -f "$log_file" ]] || return 1
   CURL_ARGS=()
-  mapfile -d '' -t CURL_ARGS <"$CURL_STUB_LOG"
+  mapfile -d '' -t CURL_ARGS <"$log_file"
 }
 
 # Prints the JSON payload passed to curl via `-d`, if the stub was invoked.
+# curl_payload [call_index]
 curl_payload() {
-  _curl_args || return 1
+  _curl_args "${1:-}" || return 1
 
   local i
   for i in "${!CURL_ARGS[@]}"; do
@@ -46,8 +87,9 @@ curl_payload() {
 }
 
 # Prints the request URL curl was invoked with, if the stub was invoked.
+# curl_request_url [call_index]
 curl_request_url() {
-  _curl_args || return 1
+  _curl_args "${1:-}" || return 1
 
   local arg
   for arg in "${CURL_ARGS[@]}"; do
@@ -57,6 +99,22 @@ curl_request_url() {
     fi
   done
   return 1
+}
+
+# Prints the HTTP method curl was invoked with (via -X), defaulting to GET
+# when no -X flag was passed, matching curl's own default.
+# curl_request_method [call_index]
+curl_request_method() {
+  _curl_args "${1:-}" || return 1
+
+  local i
+  for i in "${!CURL_ARGS[@]}"; do
+    if [[ "${CURL_ARGS[$i]}" == "-X" ]]; then
+      printf '%s' "${CURL_ARGS[$((i + 1))]}"
+      return 0
+    fi
+  done
+  printf 'GET'
 }
 
 # Fails loudly if curl was never invoked, instead of letting callers

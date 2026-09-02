@@ -13,7 +13,7 @@ usage() {
   cat >&2 <<'EOF'
 Usage: release.sh --tag <name> [--repo owner/name] [--commit <ref>]
                    [--body <text> | --body-file <path>] [--generate-notes]
-                   [--draft] [--prerelease] [--latest]
+                   [--draft] [--prerelease] [--latest] [--tag-major]
 
   --repo owner/name   Repository to release into. Defaults to $GITHUB_REPOSITORY.
   --tag <name>        Tag to create the release for. Required.
@@ -24,10 +24,126 @@ Usage: release.sh --tag <name> [--repo owner/name] [--commit <ref>]
   --draft             Create the release as a draft.
   --prerelease        Mark the release as a prerelease.
   --latest            Mark the release as the repo's "latest" release.
+  --tag-major         Also create/force-move the Major Tag (vMAJOR) to the Release Tag's commit.
+                      Requires --tag to be a Release Tag (MAJOR.MINOR.PATCH, optional leading v).
 
 Auth is read from $GITHUB_TOKEN, falling back to $GH_TOKEN.
 API base URL defaults to https://api.github.com, overridable via $GITHUB_API_URL.
 EOF
+}
+
+# A Release Tag: a Semantic Version (MAJOR.MINOR.PATCH, per semver.org), with
+# an optional leading lowercase v, and no pre-release/build-metadata suffix.
+release_tag_regex='^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+
+# github_api <method> <path> [payload]
+# Performs one GitHub API call and prints the response in the shape the
+# rest of this script expects: the response body, a newline, then the HTTP
+# status code (matching curl's own -w '\n%{http_code}').
+github_api() {
+  local method="$1" path="$2" payload="${3:-}"
+  local args=(-sS -w '\n%{http_code}' -X "$method" \
+    -H "Authorization: Bearer $token" \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    "$api_url/$path")
+  if [[ -n "$payload" ]]; then
+    args+=(-d "$payload")
+  fi
+  curl "${args[@]}"
+}
+
+response_status() {
+  printf '%s\n' "$1" | tail -n1
+}
+
+response_body_of() {
+  printf '%s\n' "$1" | sed '$d'
+}
+
+# resolve_tag_commit_sha <tag>
+# Resolves the commit SHA a just-created Release Tag points at, via
+# GET git/refs/tags/<tag>. If the tag is annotated (object.type == "tag"),
+# dereferences it via GET git/tags/<sha> to reach the underlying commit,
+# since a Moving Tag must point at a commit like the Release Tag does.
+# Exits non-zero on failure.
+resolve_tag_commit_sha() {
+  local tag_name="$1"
+  local response http_code body sha type
+
+  response=$(github_api GET "repos/$repo/git/refs/tags/$tag_name")
+  http_code=$(response_status "$response")
+  body=$(response_body_of "$response")
+
+  if ! [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+    echo "$body" >&2
+    exit 1
+  fi
+
+  sha=$(echo "$body" | jq -r '.object.sha')
+  type=$(echo "$body" | jq -r '.object.type')
+
+  if [[ "$type" == "tag" ]]; then
+    response=$(github_api GET "repos/$repo/git/tags/$sha")
+    http_code=$(response_status "$response")
+    body=$(response_body_of "$response")
+
+    if ! [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+      echo "$body" >&2
+      exit 1
+    fi
+
+    sha=$(echo "$body" | jq -r '.object.sha')
+  fi
+
+  echo "$sha"
+}
+
+# create_or_move_tag <moving_tag> <sha>
+# Points a Moving Tag (e.g. a Major Tag) at the given commit SHA: attempts
+# to create it via POST git/refs first, falling back to a force-move via
+# PATCH git/refs/<ref> if it already exists. Trying the create unconditionally
+# (rather than checking existence first) keeps this a single atomic write
+# attempt, avoiding a check-then-act race against a concurrent run touching
+# the same Moving Tag. Exits non-zero if any call in this sequence fails.
+create_or_move_tag() {
+  local moving_tag="$1" sha="$2"
+  local ref="tags/$moving_tag"
+  local response http_code body
+
+  local create_payload
+  create_payload=$(jq -n --arg ref "refs/$ref" --arg sha "$sha" '{ref: $ref, sha: $sha}')
+  response=$(github_api POST "repos/$repo/git/refs" "$create_payload")
+  http_code=$(response_status "$response")
+  body=$(response_body_of "$response")
+
+  if [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+    return 0
+  fi
+
+  if [[ "$http_code" != "422" ]] || ! echo "$body" | jq -e '.message == "Reference already exists"' >/dev/null; then
+    echo "$body" >&2
+    exit 1
+  fi
+
+  local move_payload
+  move_payload=$(jq -n --arg sha "$sha" '{sha: $sha, force: true}')
+  response=$(github_api PATCH "repos/$repo/git/refs/$ref" "$move_payload")
+  http_code=$(response_status "$response")
+  body=$(response_body_of "$response")
+
+  if ! [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+    echo "$body" >&2
+    exit 1
+  fi
+}
+
+# major_tag_of <tag>
+# Derives the Major Tag name (always v-prefixed) from a Release Tag.
+major_tag_of() {
+  local major="${1#v}"
+  major="${major%%.*}"
+  echo "v$major"
 }
 
 repo="${GITHUB_REPOSITORY:-}"
@@ -41,6 +157,7 @@ generate_notes=false
 draft=false
 prerelease=false
 latest=false
+tag_major=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -87,6 +204,10 @@ while [[ $# -gt 0 ]]; do
       latest=true
       shift
       ;;
+    --tag-major)
+      tag_major=true
+      shift
+      ;;
     *)
       echo "Unknown argument: $1" >&2
       usage
@@ -102,6 +223,11 @@ fi
 
 if [[ -z "$tag" ]]; then
   echo "Error: --tag is required" >&2
+  exit 1
+fi
+
+if [[ "$tag_major" == true ]] && ! [[ "$tag" =~ $release_tag_regex ]]; then
+  echo "Error: --tag-major requires --tag to be a Release Tag (MAJOR.MINOR.PATCH, optional leading v); got '$tag'" >&2
   exit 1
 fi
 
@@ -158,18 +284,15 @@ fi
 
 payload=$(jq -n "${jq_args[@]}" "$jq_filter")
 
-response=$(curl -sS -w '\n%{http_code}' \
-  -X POST \
-  -H "Authorization: Bearer $token" \
-  -H "Accept: application/vnd.github+json" \
-  -H "X-GitHub-Api-Version: 2022-11-28" \
-  "$api_url/repos/$repo/releases" \
-  -d "$payload")
-
-http_code=$(printf '%s\n' "$response" | tail -n1)
-response_body=$(printf '%s\n' "$response" | sed '$d')
+response=$(github_api POST "repos/$repo/releases" "$payload")
+http_code=$(response_status "$response")
+response_body=$(response_body_of "$response")
 
 if [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+  if [[ "$tag_major" == true ]]; then
+    commit_sha=$(resolve_tag_commit_sha "$tag")
+    create_or_move_tag "$(major_tag_of "$tag")" "$commit_sha"
+  fi
   echo "$response_body" | jq -r '.html_url'
   exit 0
 else
